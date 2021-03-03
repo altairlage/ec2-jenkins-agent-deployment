@@ -1,0 +1,233 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: "Deploys a linux jenkins agent build server"
+
+Parameters:
+  IamInstanceProfileParameter:
+    Type: String
+  InstanceTypeParameter:
+    Type: String
+  ImageIdParameter:
+    Type: String
+  KeyNameParameter:
+    Type: String
+  SecurityGroupIdsParameter:
+    Type: CommaDelimitedList
+  SubnetIdParameter:
+    Type: String
+
+Resources:
+  JenkinsAgent:
+    Type: 'AWS::EC2::Instance'
+    Metadata:
+      AWS::CloudFormation::Init:
+        config:
+          packages:
+            yum:
+              python3: []
+              ntpdate: []
+              git: []
+              amazon-cloudwatch-agent: []
+              java-1.8.0-openjdk: []
+          files:
+            /etc/cfn/cfn-hup.conf:
+              content: !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+              mode: "000400"
+              owner: root
+              group: root
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.JenkinsAgent.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource JenkinsAgent --region ${AWS::Region}
+                runsas=root
+              mode: "000400"
+              owner: root
+              group: root
+            /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json:
+              content: !Sub |
+                {
+                    "agent": {
+                        "metrics_collection_interval": 60,
+                        "run_as_user": "root"
+                    },
+                    "logs": {
+                        "logs_collected": {
+                            "files": {
+                                "collect_list": [
+                                    {
+                                        "file_path": "/var/log/messages",
+                                        "log_group_name": "${AWS::StackName}",
+                                        "log_stream_name": "{instance_id}-var-log-messages"
+                                    },
+                                    {
+                                        "file_path": "/var/log/cloud-init.log",
+                                        "log_group_name": "${AWS::StackName}",
+                                        "log_stream_name": "{instance_id}-cloud-init"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "metrics": {
+                        "namespace": "JenkinsAgents",
+                        "append_dimensions": {
+                            "InstanceId": "${!aws:InstanceId}",
+                            "InstanceType": "${!aws:InstanceType}"
+                        },
+                        "metrics_collected": {
+                            "cpu": {
+                                "measurement": [
+                                    "cpu_usage_idle",
+                                    "cpu_usage_iowait",
+                                    "cpu_usage_user",
+                                    "cpu_usage_system"
+                                ],
+                                "metrics_collection_interval": 60,
+                                "resources": [
+                                    "*"
+                                ],
+                                "totalcpu": true
+                            },
+                            "disk": {
+                                "measurement": [
+                                    "used_percent",
+                                    "inodes_free"
+                                ],
+                                "metrics_collection_interval": 60,
+                                "resources": [
+                                    "*"
+                                ]
+                            },
+                            "diskio": {
+                                "measurement": [
+                                    "io_time",
+                                    "write_bytes",
+                                    "read_bytes",
+                                    "writes",
+                                    "reads"
+                                ],
+                                "metrics_collection_interval": 60,
+                                "resources": [
+                                    "*"
+                                ]
+                            },
+                            "mem": {
+                                "measurement": [
+                                    "mem_used_percent"
+                                ],
+                                "metrics_collection_interval": 60
+                            },
+                            "netstat": {
+                                "measurement": [
+                                    "tcp_established",
+                                    "tcp_time_wait"
+                                ],
+                                "metrics_collection_interval": 60
+                            },
+                            "swap": {
+                                "measurement": [
+                                    "swap_used_percent"
+                                ],
+                                "metrics_collection_interval": 60
+                            }
+                        }
+                    }
+                }
+              mode: "644"
+              owner: root
+              group: root
+
+            /home/ec2-user/README.txt:
+              content: !Sub |
+                The basics of this agent server have been setup.  Jenkins user added, home dir set, and
+                ssh key generated.  However, the ssh key was generated without a passphrase.  This must be added.
+
+                First step - determine what the passphrase will be then, do the following two commands
+
+                    sudo -u jenkins bash
+                    ssh-keygen -p -f /var/jenkins/.ssh/jenkinsAgent_rsa
+
+                Once the passphrase has been created, store it and the private key in the password store
+
+                If this box is to be a agent for the checkers controller, run checkers_setup.sh
+                If this box is to be a agent for the for angular builds, run angular8_setup.sh
+
+              mode: "644"
+              owner: ec2-user
+              group: ec2-user
+            /home/ec2-user/checkers_setup.sh:
+              content: !Sub |
+                #!/bin/bash
+                # do all the necessary bits for a checkers agent here
+                sudo pip3 install requests
+              mode: "755"
+              owner: ec2-user
+              group: ec2-user
+            /home/ec2-user/angular8_setup.sh:
+              content: !Sub |
+                #!/bin/bash
+                # do all the necessary bits for an angular agent here
+                # TODO FILL ME IN
+              mode: "755"
+              owner: ec2-user
+              group: ec2-user
+          commands:
+            cloudwatch_agent:
+              command: /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
+            java:
+              command: amazon-linux-extras install java-openjdk11
+            jenkins_agent_ssh_setup:
+              command: useradd -m -d /var/jenkins -s /bin/bash -c "Jenkins Agent" -U jenkins && chown -R jenkins:jenkins /var/jenkins && sudo -u jenkins mkdir -p /var/jenkins/.ssh && cd /var/jenkins/.ssh && sudo -u jenkins ssh-keygen -t rsa -m PEM -C "Jenkins linux agent key" -f "jenkinsAgent_rsa" -q -N "" && sudo -u jenkins cp jenkinsAgent_rsa.pub authorized_keys
+          services:
+              sysvinit:
+                  cfn-hup:
+                      enabled: true
+                      ensurerunning: true
+                      files:
+                          - /etc/cfn/cfn-hup.conf
+                          - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+                  amazon-cloudwatch-agent:
+                      enabled: true
+                      ensurerunning: true
+                      files:
+                          - /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+
+    Properties:
+      ImageId: !Ref ImageIdParameter
+      InstanceType: !Ref InstanceTypeParameter
+      KeyName: !Ref KeyNameParameter
+      IamInstanceProfile: !Ref IamInstanceProfileParameter
+      BlockDeviceMappings:
+        - DeviceName: /dev/sdh
+          Ebs:
+            VolumeSize: 100
+            DeleteOnTermination: True
+      SecurityGroupIds: !Ref SecurityGroupIdsParameter
+      SubnetId: !Ref SubnetIdParameter
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash -x
+            yum -y update
+
+            /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource JenkinsAgent --region ${AWS::Region}
+            /opt/aws/bin/cfn-signal --stack ${AWS::StackName} --resource JenkinsAgent --region ${AWS::Region}
+
+    CreationPolicy:
+      ResourceSignal:
+        Count: "1"
+        Timeout: "PT20M"
+
+
+Outputs:
+  InstanceId:
+    Description: Instance ID
+    Value: !GetAtt JenkinsAgent.PrivateIp

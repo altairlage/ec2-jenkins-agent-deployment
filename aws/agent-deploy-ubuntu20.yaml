@@ -1,0 +1,323 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: "Deploys a linux jenkins agent build server"
+
+Parameters:
+  IamInstanceProfileParameter:
+    Type: String
+  InstanceTypeParameter:
+    Type: String
+  ImageIdParameter:
+    Type: String
+  KeyNameParameter:
+    Type: String
+  SecurityGroupIdsParameter:
+    Type: CommaDelimitedList
+  SubnetIdParameter:
+    Type: String
+
+Resources:
+  JenkinsAgent:
+    Type: 'AWS::EC2::Instance'
+    Metadata:
+      AWS::CloudFormation::Init:
+        config:
+          packages:
+            apt:
+              python3: []
+              ntpdate: []
+              openjdk-8-jre: []
+              apt-utils: []
+              locales: []
+              language-pack-en: []
+              apt-transport-https: []
+              build-essential: []
+              ca-certificates: []
+              checkinstall: []
+              curl: []
+              dnsutils: []
+              gettext: []
+              git: []
+              gpg: []
+              jq: []
+              libbz2-dev: []
+              libffi-dev: []
+              liblzma-dev: []
+              libncurses5-dev: []
+              libncursesw5-dev: []
+              libpq-dev: []
+              libreadline-dev: []
+              libsqlite3-dev: []
+              libssl-dev: []
+              libxml2-dev: []
+              libxslt1-dev: []
+              make: []
+              mercurial: []
+              net-tools: []
+              nginx: []
+              openssh-client: []
+              python-openssl: []
+              software-properties-common: []
+              tk-dev: []
+              unzip: []
+              wget: []
+              xz-utils: []
+              zip: []
+              zlib1g-dev: []
+              python3-pip: []
+              openjdk-11-jre-headless: []
+              
+          files:
+            /etc/cfn/cfn-hup.conf:
+              content: !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+              mode: "000400"
+              owner: root
+              group: root
+            
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.JenkinsAgent.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource JenkinsAgent --region ${AWS::Region}
+                runsas=root
+              mode: "000400"
+              owner: root
+              group: root
+            
+            /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json:
+              content: !Sub |
+                {
+                    "agent": {
+                        "metrics_collection_interval": 60,
+                        "run_as_user": "root"
+                    },
+                    "logs": {
+                        "logs_collected": {
+                            "files": {
+                                "collect_list": [
+                                    {
+                                        "file_path": "/var/log/messages",
+                                        "log_group_name": "${AWS::StackName}",
+                                        "log_stream_name": "{instance_id}-var-log-messages"
+                                    },
+                                    {
+                                        "file_path": "/var/log/cloud-init.log",
+                                        "log_group_name": "${AWS::StackName}",
+                                        "log_stream_name": "{instance_id}-cloud-init"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "metrics": {
+                        "namespace": "WGC-Infra-JenkinsAgents",
+                        "append_dimensions": {
+                            "InstanceId": "${!aws:InstanceId}",
+                            "InstanceType": "${!aws:InstanceType}"
+                        },
+                        "metrics_collected": {
+                            "cpu": {
+                                "measurement": [
+                                    "cpu_usage_idle",
+                                    "cpu_usage_iowait",
+                                    "cpu_usage_user",
+                                    "cpu_usage_system"
+                                ],
+                                "metrics_collection_interval": 60,
+                                "resources": [
+                                    "*"
+                                ],
+                                "totalcpu": true
+                            },
+                            "disk": {
+                                "measurement": [
+                                    "used_percent",
+                                    "inodes_free"
+                                ],
+                                "metrics_collection_interval": 60,
+                                "resources": [
+                                    "*"
+                                ]
+                            },
+                            "diskio": {
+                                "measurement": [
+                                    "io_time",
+                                    "write_bytes",
+                                    "read_bytes",
+                                    "writes",
+                                    "reads"
+                                ],
+                                "metrics_collection_interval": 60,
+                                "resources": [
+                                    "*"
+                                ]
+                            },
+                            "mem": {
+                                "measurement": [
+                                    "mem_used_percent"
+                                ],
+                                "metrics_collection_interval": 60
+                            },
+                            "netstat": {
+                                "measurement": [
+                                    "tcp_established",
+                                    "tcp_time_wait"
+                                ],
+                                "metrics_collection_interval": 60
+                            },
+                            "swap": {
+                                "measurement": [
+                                    "swap_used_percent"
+                                ],
+                                "metrics_collection_interval": 60
+                            }
+                        }
+                    }
+                }
+              mode: "644"
+              owner: root
+              group: root
+            
+            /lib/systemd/system/cfn-hup.service:
+              content: !Sub |
+                [Unit]
+                Description=cfn-hup daemon
+                
+                [Service]
+                Type=simple
+                ExecStart=/opt/aws/bin/cfn-hup
+                Restart=always
+                
+                [Install]
+                WantedBy=multi-user.target
+              mode: "000400"
+              owner: root
+              group: root
+            
+            /tmp/amazon-cloudwatch-agent.deb:
+              source: "https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb"
+              mode: "644"
+              owner: ubuntu
+              group: ubuntu
+            
+            /home/ubuntu/README.txt:
+              content: !Sub |
+                The basics of this agent server have been setup.  Jenkins user added, home dir set, and
+                ssh key generated.  However, the ssh key was generated without a passphrase.  This must be added.
+
+                First step - determine what the passphrase will be then, do the following two commands
+
+                    sudo -u jenkins bash
+                    ssh-keygen -t rsa -m PEM -C "Jenkins linux agent key" -f "jenkinsAgent_rsa" -q -N "<PASSPHRASE>"
+                    sudo -u jenkins cp jenkinsAgent_rsa.pub authorized_keys
+              mode: "644"
+              owner: ubuntu
+              group: ubuntu
+
+            /home/ubuntu/angular8_setup.sh:
+              content: !Sub |
+                #!/bin/bash
+                # do all the necessary bits for an angular agent here
+                # TODO FILL ME IN
+              mode: "755"
+              owner: ubuntu
+              group: ubuntu
+
+            /home/ubuntu/tdr_setup.sh:
+              content: !Sub |
+                #!/bin/bash
+                #
+                # IMPORTANT:
+                # awscliv2zip.pem to /var/jenkins/awscliv2zip.pem
+                # config.json to /var/jenkins/.docker/config.json
+                # pypirc to /var/jenkins/.pypirc
+                # pip.conf to /var/jenkins/.pip/pip.conf                
+              
+                echo "--- Installing Buildah ---"
+                echo 'deb http://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable/xUbuntu_18.04/ /' > /etc/apt/sources.list.d/devel:kubic:libcontainers:stable.list
+                wget -nv https://download.opensuse.org/repositories/devel:kubic:libcontainers:stable/xUbuntu_18.04/Release.key -O Release.key
+                apt-key add - < Release.key
+                apt-get update -y && apt-get install -y buildah
+
+                echo "--- Installing AWS CLI V2 ---"
+                curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+                gpg --import /home/ubuntu/awscliv2zip.pem
+                curl -o awscliv2.sig https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip.sig
+                gpg --verify awscliv2.sig awscliv2.zip
+                unzip awscliv2.zip
+                ./aws/install
+                rm -rf awscliv2zip.pem awscliv2.sig awscliv2.zip
+
+                echo "--- Installing pyenv ---"
+                # https://github.com/pyenv/pyenv/wiki
+                curl -L https://github.com/pyenv/pyenv-installer/raw/master/bin/pyenv-installer | bash
+                PATH=$HOME/.pyenv/plugins/pyenv-virtualenv/shims:$HOME/.pyenv/shims:$HOME/.pyenv/bin:$PATH
+                pyenv update && pyenv install 2.7.17 && pyenv install 3.5.9 && pyenv install 3.6.10 && pyenv install 3.7.7 && pyenv install 3.8.2
+                pyenv global 3.8.2 3.7.7 3.6.10 3.5.9 2.7.17
+                
+              mode: "755"
+              owner: ubuntu
+              group: ubuntu
+
+          commands:
+            01install_cloudwatch_agent:
+              command: dpkg -i /tmp/amazon-cloudwatch-agent.deb
+            02cloudwatch_agent:
+              command: /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
+            03jenkins_agent_ssh_setup:
+              command: useradd -m -d /var/jenkins -s /bin/bash -c "Jenkins Agent" -U jenkins && chown -R jenkins:jenkins /var/jenkins && sudo -u jenkins mkdir -p /var/jenkins/.ssh && cd /var/jenkins/.ssh && sudo -u jenkins ssh-keygen -t rsa -m PEM -C "Jenkins linux agent key" -f "jenkinsAgent_rsa" -q -N "" && sudo -u jenkins cp jenkinsAgent_rsa.pub authorized_keys
+            04update_locale:
+              command: update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+            05install_aws_sam_cli:
+              command: pip3 install aws-sam-cli
+            06install_docker:
+              command: curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-18.06.0-ce.tgz | tar --strip-components=1 -xz -C /usr/local/bin docker/docker
+            07install_docker_compose:
+              command: curl -fsSL https://github.com/docker/compose/releases/download/1.22.0/docker-compose-`uname -s`-`uname -m` > /usr/local/bin/docker-compose && chmod +x /usr/local/bin/docker-compose  
+            08enable_cfn_hup:
+              command: systemctl enable cfn-hup.service
+            09start_cfn_hup:
+              command: systemctl start cfn-hup.service
+
+    Properties:
+      ImageId: !Ref ImageIdParameter
+      InstanceType: !Ref InstanceTypeParameter
+      KeyName: !Ref KeyNameParameter
+      IamInstanceProfile: !Ref IamInstanceProfileParameter
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 100
+            DeleteOnTermination: True
+      SecurityGroupIds: !Ref SecurityGroupIdsParameter
+      SubnetId: !Ref SubnetIdParameter
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash -xe
+            sudo apt-get -y update
+            sudo apt-get -y install python3-setuptools
+
+            sudo mkdir -p /opt/aws/bin
+            wget https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-py3-latest.tar.gz
+            sudo python3 -m easy_install --script-dir /opt/aws/bin aws-cfn-bootstrap-py3-latest.tar.gz
+            sudo /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource JenkinsAgent --region ${AWS::Region}
+            sudo /opt/aws/bin/cfn-signal --stack ${AWS::StackName} --resource JenkinsAgent --region ${AWS::Region}
+
+    CreationPolicy:
+      ResourceSignal:
+        Count: "1"
+        Timeout: "PT60M"
+
+
+Outputs:
+  InstanceId:
+    Description: Instance ID
+    Value: !GetAtt JenkinsAgent.PrivateIp

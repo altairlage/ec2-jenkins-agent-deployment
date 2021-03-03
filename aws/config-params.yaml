@@ -1,0 +1,16 @@
+---
+linux-ami-id:
+  ubuntu20: ami-0928f4202481dfdf6
+  amazonlinux2: ami-0528a5175983e7f28
+subnet-id: subnet-<>
+dev:
+  securityGroups: "sg-<id>"
+  iamInstanceProfile: <instance profile id>
+  key: <kallen name>
+  instance-type: t2.medium
+
+prod:
+  securityGroups: "sg-<id>"
+  iamInstanceProfile: <instance profile id>
+  key: <kallen name>
+  instance-type: m4.xlarge
